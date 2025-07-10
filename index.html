@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>&lt;model-viewer&gt; and xstate music box example</title>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <link rel="stylesheet" href="demo-styles.css" />
+
+    <!-- The following libraries and polyfills are recommended to maximize browser support -->
+    <!-- NOTE: you must adjust the paths as appropriate for your project -->
+
+    <!-- 🚨 REQUIRED: Web Components polyfill to support Edge and Firefox < 63 -->
+    <script src="https://unpkg.com/@webcomponents/webcomponentsjs@2.1.3/webcomponents-loader.js"></script>
+
+    <!-- 💁 OPTIONAL: Intersection Observer polyfill for better performance in Safari and IE11 -->
+    <script src="https://unpkg.com/intersection-observer@0.5.1/intersection-observer.js"></script>
+
+    <!-- 💁 OPTIONAL: Resize Observer polyfill improves resize behavior in non-Chrome browsers -->
+    <script src="https://unpkg.com/resize-observer-polyfill@1.5.0/dist/ResizeObserver.js"></script>
+
+    <!-- 💁 OPTIONAL: Fullscreen polyfill is needed to fully support AR features -->
+    <script src="https://unpkg.com/fullscreen-polyfill@1.0.2/dist/fullscreen.polyfill.js"></script>
+
+    <!-- 💁 OPTIONAL: The :focus-visible polyfill removes the focus ring for some input types -->
+    <script
+      src="https://unpkg.com/focus-visible@5.0.2/dist/focus-visible.js"
+      defer
+    ></script>
+
+    <script src="https://unpkg.com/xstate@4.6.7/dist/xstate.js"></script>
+
+    <script src="/utils.js"></script>
+  </head>
+  <body>
+    <div id="ie11-message">
+      Sorry, your browser is not supported. Please
+      <a href="https://www.microsoft.com/en-us/edge">upgrade here</a>
+    </div>
+    <div id="card">
+      <model-viewer
+        src="/music-box.glb"
+        ios-src="/music-box.usdz"
+        alt="Music Box Demo"
+        shadow-intensity="1"
+        exposure="1"
+        camera-controls
+        interaction-prompt="none"
+        autoplay
+        ar
+        animation-crossfade-duration="0"
+      ></model-viewer>
+      <div id="controls">
+        <button id="open" disabled>Open Box</button>
+        <button id="close" disabled>Close Box</button>
+      </div>
+      <section class="attribution">
+        <span>
+          <h1>Music Box</h1>
+          <span
+            >By
+            <a href="https://twitter.com/sophiedixon1" target="_blank"
+              >Sophie</a
+            >
+            and <a href="https://twitter.com/edsilv" target="_blank">Ed</a> @
+            <a href="https://twitter.com/mnemoscene_io" target="_blank"
+              >Mnemoscene</a
+            >
+          </span>
+        </span>
+        <a
+          class="cc"
+          href="https://creativecommons.org/licenses/by/2.0/"
+          target="_blank"
+        >
+          <img
+            src="https://mirrors.creativecommons.org/presskit/icons/cc.svg"
+          />
+          <img
+            src="https://mirrors.creativecommons.org/presskit/icons/by.svg"
+          />
+        </a>
+      </section>
+    </div>
+
+    <footer>
+      <div id="description">
+        <h2>Sound on 🔊</h2>
+        Demonstrates switching between animated
+        <a href="https://wiki.fileformat.com/3d/glb/" target="_blank">glb</a>
+        model states using
+        <a href="https://modelviewer.dev/" target="_blank">model-viewer</a> and
+        <a href="https://xstate.js.org/" target="_blank">xstate</a>
+      </div>
+      <a href="https://glitch.com/edit/#!/remix/musicbox3d">
+        <img
+          src="https://cdn.glitch.com/2bdfb3f8-05ef-4035-a06e-2043962a3a13%2Fremix%402x.png?1513093958726"
+          alt="remix button"
+          aria-label="remix"
+          height="33"
+        />
+      </a>
+    </footer>
+
+    <audio
+      id="soundfx"
+      src="https://cdn.glitch.com/fd356a87-0fc8-473f-ab23-5bf9e9bd82d7%2Fsoundfx.mp3?v=1588589061851"
+      preload
+    ></audio>
+
+    <script>
+      // check for IE11
+      window.addEventListener("DOMContentLoaded", function () {
+        var isIE11 = !window.ActiveXObject && "ActiveXObject" in window;
+        if (isIE11) {
+          var ie11Message = document.getElementById("ie11-message");
+          ie11Message.style.display = "block";
+          return;
+        }
+      });
+    </script>
+
+    <script>
+      const musicBoxMachine = XState.Machine({
+        id: "musicbox",
+        initial: "closed",
+        states: {
+          closed: {
+            on: {
+              open: "opening",
+            },
+          },
+          opening: {
+            on: {
+              opened: "opened",
+            },
+          },
+          opened: {
+            on: {
+              close: "closing",
+            },
+          },
+          closing: {
+            on: {
+              closed: "closed",
+            },
+          },
+        },
+      });
+
+      window.addEventListener("DOMContentLoaded", () => {
+        const modelViewer = document.querySelector("model-viewer");
+        const openBtn = document.getElementById("open");
+        const closeBtn = document.getElementById("close");
+        const soundfx = document.getElementById("soundfx");
+        const musicBoxService = XState.interpret(musicBoxMachine);
+        let soundInterval;
+
+        modelViewer.addEventListener(
+          "load",
+          () => {
+            musicBoxService
+              .onTransition((state) => {
+                // reset controls, animations
+                openBtn.disabled = true;
+                closeBtn.disabled = true;
+                modelViewer.pause();
+                modelViewer.currentTime = 0;
+                switch (state.value) {
+                  case "opening":
+                    // ios won't preload audio, this needs to be on user interaction
+                    waitForSoundFXReady(() => {
+                      // will model-viewer get an onAnimationComplete event?
+                      // it's useful to be able to pass an override timeout in any case
+                      playAnimation(
+                        "opening",
+                        () => {
+                          // once the opening animation is complete, send an "opened"
+                          // event to the XState service. this triggers a transition
+                          // to the "opened" animation, which just loops a single frame
+                          musicBoxService.send("opened");
+                        },
+                        1000
+                      );
+                      // since soundfx are in a single track (for ios), we need
+                      // to tell the audio tag playback where to start, finish,
+                      // and whether to loop
+                      playSound(0, 1, false);
+                    });
+                    break;
+                  case "opened":
+                    closeBtn.disabled = false;
+                    // immediately trigger the "dancer-rotate" animation once opened
+                    playAnimation("dancer-rotate");
+                    // play the music
+                    playSound(1, 16.5, true);
+                    break;
+                  case "closing":
+                    playAnimation(
+                      "closing",
+                      () => {
+                        musicBoxService.send("closed");
+                      },
+                      1000
+                    );
+                    playSound(17.3, 19, false, true);
+                    break;
+                  case "closed":
+                    openBtn.disabled = false;
+                    playAnimation("closed");
+                    break;
+                }
+              })
+              .start();
+          },
+          false
+        );
+
+        openBtn.addEventListener(
+          "click",
+          () => {
+            musicBoxService.send("open");
+          },
+          false
+        );
+
+        closeBtn.addEventListener(
+          "click",
+          () => {
+            musicBoxService.send("close");
+          },
+          false
+        );
+
+        const waitForSoundFXReady = (cb) => {
+          if (soundfx.readyState >= 3) {
+            cb();
+          } else {
+            soundfx.load();
+            const interval = setInterval(() => {
+              if (soundfx.readyState >= 3) {
+                clearInterval(interval);
+                cb();
+              }
+            }, 100);
+          }
+        };
+
+        const playAnimation = (name, cb, t) => {
+          modelViewer.animationName = name;
+          modelViewer.play();
+
+          if (cb) {
+            setTimeout(() => {
+              cb();
+            }, t);
+          }
+        };
+
+        const playSound = (start, end, loop, padStart) => {
+          clearInterval(soundInterval);
+
+          // adds time to the start so that the sound ends
+          // at the right time on ios
+          if (padStart) {
+            if (IS_MOBILE) {
+              console.log("pad sound");
+              const mobileOS = getMobileOS();
+
+              switch (mobileOS) {
+                case "iOS":
+                  start += 0.4;
+                  break;
+              }
+            }
+          }
+
+          soundfx.currentTime = start;
+          soundfx.play();
+
+          soundInterval = setInterval(() => {
+            if (soundfx.currentTime >= end) {
+              soundfx.currentTime = start;
+              if (!loop) {
+                soundfx.pause();
+                clearInterval(soundInterval);
+              }
+            }
+          }, 500);
+        };
+      });
+    </script>
+
+    <!-- 💁 Include both scripts below to support all browsers! -->
+
+    <!-- Loads <model-viewer> for modern browsers: -->
+    <script
+      type="module"
+      src="https://unpkg.com/@google/model-viewer@v0.10.0/dist/model-viewer.js"
+    ></script>
+
+    <!-- Loads <model-viewer> for old browsers like IE11: -->
+    <script
+      nomodule
+      src="https://unpkg.com/@google/model-viewer@v0.10.0/dist/model-viewer-legacy.js"
+    ></script>
+  </body>
+</html>
